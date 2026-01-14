@@ -7,14 +7,36 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Request logger
+app.use((req, res, next) => {
+  console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url} - Origin: ${req.get('origin')}`);
+  next();
+});
+
 /* ================= GMAIL TRANSPORT ================= */
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true, // Use SSL
   auth: {
-    user: process.env.EMAIL_USER,   // ✅ FIXED
-    pass: process.env.EMAIL_PASS,   // ✅ FIXED (App Password)
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
+  timeout: 10000, // 10 second timeout
+});
+
+// Verify connection configuration
+transporter.verify(function (error, success) {
+  if (error) {
+    console.error("❌ SMTP Verification Error:", {
+      message: error.message,
+      code: error.code,
+      command: error.command
+    });
+  } else {
+    console.log("✅ Server is ready to take our messages");
+  }
 });
 
 /* ================= TEST ROUTE ================= */
@@ -23,10 +45,28 @@ app.get("/", (req, res) => {
   res.send("Booking Mail Server Running ✅");
 });
 
+app.get("/test-mail", async (req, res) => {
+  try {
+    const info = await transporter.sendMail({
+      from: `"TEST - WINFLY" <${process.env.EMAIL_USER}>`,
+      to: process.env.ADMIN_EMAIL,
+      subject: "Test Mail from Sanjay Travels Backend",
+      text: "If you received this, your SMTP configuration is working! ✅",
+      html: "<b>If you received this, your SMTP configuration is working! ✅</b>",
+    });
+    res.json({ success: true, messageId: info.messageId });
+  } catch (error) {
+    console.error("❌ TEST MAIL ERROR:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 /* ================= BOOKING ROUTE ================= */
 
 app.post("/book-taxi", async (req, res) => {
-  console.log("📥 RECEIVED BOOKING REQUEST:", req.body);
+  console.log("-----------------------------------------");
+  console.log("📥 RECEIVED BOOKING REQUEST AT:", new Date().toLocaleTimeString());
+
   const {
     name,
     mobile,
@@ -36,13 +76,51 @@ app.post("/book-taxi", async (req, res) => {
     time,
     tripType,
     message,
+    bookingId,
+    vehicleType,
+    pickupAddress,
+    dropAddress,
+    pickupState,
+    dropState,
+    fromSubDistrict,
+    toSubDistrict,
+    pincode,
+    specialRequests,
+    numTravelers,
+    tourType,
+    rentalCity,
+    rentalDuration
   } = req.body;
 
+  // Safe tripType handling
+  const safeTripType = tripType || "outstation";
+  console.log("👤 Customer:", name);
+  console.log("📱 Mobile:", mobile);
+  console.log("🚕 Type:", safeTripType);
+
   try {
-    await transporter.sendMail({
+    // Dynamic logic for labels based on tab
+    let categoryLabel = "Journey Details";
+    let firstRowLabel = "Pickup Address";
+    let secondRowLabel = "Drop Address";
+    let showDistrictInfo = true;
+
+    if (safeTripType === "tours") {
+      categoryLabel = "Tour Package Details";
+      firstRowLabel = "Selected Tour";
+      secondRowLabel = "Number of Travelers";
+      showDistrictInfo = false;
+    } else if (safeTripType === "rental") {
+      categoryLabel = "Rental Service Details";
+      firstRowLabel = "City";
+      secondRowLabel = "Package Duration";
+      showDistrictInfo = false;
+    }
+
+    const info = await transporter.sendMail({
       from: `"WINFLY DROP TAXI 🚖" <${process.env.EMAIL_USER}>`,
       to: process.env.ADMIN_EMAIL,
-      subject: `🚨 New Booking: ${name}`,
+      subject: `🚨 New ${safeTripType.toUpperCase()} Booking: ${name}`,
       html: `
         <!DOCTYPE html>
         <html>
@@ -65,11 +143,6 @@ app.post("/book-taxi", async (req, res) => {
             .data-row:last-child { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
             .data-label { font-size: 11px; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
             .data-value { font-size: 16px; font-weight: 600; color: #1e293b; }
-            .journey-track { position: relative; padding-left: 30px; margin-top: 15px; }
-            .dot { position: absolute; left: 0; width: 12px; height: 12px; border-radius: 50%; border: 3px solid #fff; }
-            .dot-pickup { top: 4px; background: #e11d48; box-shadow: 0 0 10px rgba(225, 29, 72, 0.4); }
-            .dot-drop { bottom: 4px; background: #1e293b; }
-            .line { position: absolute; left: 5px; top: 16px; bottom: 16px; width: 2px; background: #e2e8f0; border-left: 1px dashed #cbd5e1; }
             .highlight-text { color: #e11d48; font-weight: 700; }
             .footer { text-align: center; padding: 40px 20px; background: #1e293b; color: rgba(255,255,255,0.6); font-size: 12px; }
             .footer p { margin: 5px 0; }
@@ -80,12 +153,12 @@ app.post("/book-taxi", async (req, res) => {
             <div class="container">
               <div class="header">
                 <h1>WINFLY DROP TAXI</h1>
-                <p>Executive Booking Notification</p>
+                <p>New Internal Booking Alert</p>
               </div>
               
               <div class="content">
                 <div style="text-align: center;">
-                  <div class="badge">BOOKING ID: ${req.body.bookingId || "INTERNAL"}</div>
+                  <div class="badge">BOOKING ID: ${bookingId || "INTERNAL"}</div>
                 </div>
 
                 <div class="section">
@@ -107,24 +180,26 @@ app.post("/book-taxi", async (req, res) => {
                 </div>
 
                 <div class="section">
-                  <span class="section-label">Journey Details</span>
+                  <span class="section-label">${categoryLabel}</span>
                   <div class="data-card">
                     <div class="data-row">
-                      <div class="data-label">Pickup Address (City/District)</div>
-                      <div class="data-value">${from}, ${req.body.fromSubDistrict || ""}</div>
+                      <div class="data-label">${firstRowLabel}</div>
+                      <div class="data-value">${from} ${fromSubDistrict ? `(${fromSubDistrict})` : ""}</div>
                     </div>
                     <div class="data-row">
-                      <div class="data-label">Pickup State</div>
-                      <div class="data-value">${req.body.pickupState || "—"}</div>
+                      <div class="data-label">${secondRowLabel}</div>
+                      <div class="data-value">${to} ${toSubDistrict ? `(${toSubDistrict})` : ""}</div>
                     </div>
-                    <div class="data-row" style="margin-top: 20px;">
-                      <div class="data-label">Drop Address (City/District)</div>
-                      <div class="data-value">${to}, ${req.body.toSubDistrict || ""}</div>
+                    ${showDistrictInfo ? `
+                    <div class="data-row">
+                      <div class="data-label">Pickup State</div>
+                      <div class="data-value">${pickupState || "—"}</div>
                     </div>
                     <div class="data-row">
                       <div class="data-label">Drop State</div>
-                      <div class="data-value">${req.body.dropState || "—"}</div>
+                      <div class="data-value">${dropState || "—"}</div>
                     </div>
+                    ` : ""}
                   </div>
                 </div>
 
@@ -134,7 +209,7 @@ app.post("/book-taxi", async (req, res) => {
                     <table width="100%">
                       <tr>
                         <td>
-                          <div class="data-label">Pickup Date</div>
+                          <div class="data-label">Travel Date</div>
                           <div class="data-value">${date}</div>
                         </td>
                         <td>
@@ -144,46 +219,47 @@ app.post("/book-taxi", async (req, res) => {
                       </tr>
                       <tr>
                         <td style="padding-top: 15px;">
-                          <div class="data-label">Type of Trip</div>
-                          <div class="data-value" style="text-transform: capitalize;">${tripType}</div>
+                          <div class="data-label">Booking Type</div>
+                          <div class="data-value" style="text-transform: capitalize;">${safeTripType.replace("-", " ")}</div>
                         </td>
                         <td align="right" style="padding-top: 15px;">
-                          <div class="data-label">Select Vehicle</div>
-                          <div class="data-value highlight-text" style="text-transform: uppercase;">${req.body.vehicleType || "Executive"}</div>
+                          <div class="data-label">Vehicle Selected</div>
+                          <div class="data-value highlight-text" style="text-transform: uppercase;">${vehicleType || "Not Specified"}</div>
                         </td>
                       </tr>
                     </table>
                   </div>
                 </div>
 
+                ${showDistrictInfo ? `
                 <div class="section">
-                  <span class="section-label">Complete Address Logs</span>
+                  <span class="section-label">Full Address Logs</span>
                   <div class="data-card">
                     <div class="data-row">
-                      <div class="data-label">Full Pickup Address</div>
-                      <div class="data-value" style="font-weight: 400; font-size: 14px;">${req.body.pickupAddress || "N/A"}</div>
+                      <div class="data-label">Exact Pickup Location</div>
+                      <div class="data-value" style="font-weight: 400; font-size: 14px;">${pickupAddress || "N/A"}</div>
                     </div>
                     <div class="data-row">
                       <div class="data-label">Pincode</div>
-                      <div class="data-value">${req.body.pincode || "—"}</div>
+                      <div class="data-value">${pincode || "—"}</div>
                     </div>
                     <div class="data-row">
-                      <div class="data-label">Full Drop Address</div>
-                      <div class="data-value" style="font-weight: 400; font-size: 14px;">${req.body.dropAddress || "N/A"}</div>
+                      <div class="data-label">Exact Drop Location</div>
+                      <div class="data-value" style="font-weight: 400; font-size: 14px;">${dropAddress || "N/A"}</div>
                     </div>
                   </div>
                 </div>
+                ` : ""}
 
                 <div class="section">
-                  <span class="section-label">Communication</span>
+                  <span class="section-label">Special Requests & Notes</span>
                   <div class="data-card">
-                    <div class="data-label">Special Requests (Optional)</div>
-                    <div class="data-value" style="font-style: italic; color: #e11d48;">"${req.body.specialRequests || message || "No special requests."}"</div>
+                    <div class="data-value" style="font-style: italic; color: #e11d48; font-size: 14px;">"${specialRequests || "No special requests provided."}"</div>
                   </div>
                 </div>
 
                 <div style="text-align: center; margin-top: 10px;">
-                  <p style="color: #64748b; font-size: 13px;">This is an automated encrypted notification from the WINFLY Central Dispatch System.</p>
+                  <p style="color: #64748b; font-size: 13px;">Automated notification from Sanjay Travels Dispatch System.</p>
                 </div>
               </div>
 
@@ -198,15 +274,23 @@ app.post("/book-taxi", async (req, res) => {
       `,
     });
 
+    console.log("✅ MAIL SENT SUCCESSFULLY! ID:", info.messageId);
+    console.log("📧 Recipient:", process.env.ADMIN_EMAIL);
+
     res.json({
       success: true,
       message: "Booking received & mail sent to admin ✅",
     });
   } catch (error) {
-    console.error("MAIL ERROR ❌", error);
+    console.error("❌ MAIL SENDING ERROR:", {
+      message: error.message,
+      stack: error.stack,
+      response: error.response
+    });
     res.status(500).json({
       success: false,
       message: "Mail sending failed ❌",
+      error: error.message
     });
   }
 });
