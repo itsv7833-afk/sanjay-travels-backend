@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 require("dotenv").config();
 
 const app = express();
@@ -13,31 +13,12 @@ app.use((req, res, next) => {
   next();
 });
 
-/* ================= GMAIL TRANSPORT ================= */
+/* ================= RESEND EMAIL SERVICE ================= */
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true, // Use SSL
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  timeout: 10000, // 10 second timeout
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Verify connection configuration
-transporter.verify(function (error, success) {
-  if (error) {
-    console.error("❌ SMTP Verification Error:", {
-      message: error.message,
-      code: error.code,
-      command: error.command
-    });
-  } else {
-    console.log("✅ Server is ready to take our messages");
-  }
-});
+console.log("✅ Resend Email Service Initialized");
+
 
 /* ================= TEST ROUTE ================= */
 
@@ -47,14 +28,18 @@ app.get("/", (req, res) => {
 
 app.get("/test-mail", async (req, res) => {
   try {
-    const info = await transporter.sendMail({
-      from: `"TEST - WINFLY" <${process.env.EMAIL_USER}>`,
-      to: process.env.ADMIN_EMAIL,
-      subject: "Test Mail from Sanjay Travels Backend",
-      text: "If you received this, your SMTP configuration is working! ✅",
-      html: "<b>If you received this, your SMTP configuration is working! ✅</b>",
+    const { data, error } = await resend.emails.send({
+      from: 'WINFLY DROP TAXI <onboarding@resend.dev>',
+      to: [process.env.ADMIN_EMAIL || 'Winflydroptaxi@gmail.com'],
+      subject: 'Test Mail from Sanjay Travels Backend',
+      html: '<b>If you received this, your Resend configuration is working! ✅</b>',
     });
-    res.json({ success: true, messageId: info.messageId });
+
+    if (error) {
+      throw error;
+    }
+
+    res.json({ success: true, messageId: data.id });
   } catch (error) {
     console.error("❌ TEST MAIL ERROR:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -117,9 +102,9 @@ app.post("/book-taxi", async (req, res) => {
       showDistrictInfo = false;
     }
 
-    const info = await transporter.sendMail({
-      from: `"WINFLY DROP TAXI 🚖" <${process.env.EMAIL_USER}>`,
-      to: process.env.ADMIN_EMAIL,
+    const { data, error } = await resend.emails.send({
+      from: 'WINFLY DROP TAXI 🚖 <onboarding@resend.dev>',
+      to: [process.env.ADMIN_EMAIL || 'Winflydroptaxi@gmail.com'],
       subject: `🚨 New ${safeTripType.toUpperCase()} Booking: ${name}`,
       html: `
         <!DOCTYPE html>
@@ -274,7 +259,11 @@ app.post("/book-taxi", async (req, res) => {
       `,
     });
 
-    console.log("✅ MAIL SENT SUCCESSFULLY! ID:", info.messageId);
+    if (error) {
+      throw error;
+    }
+
+    console.log("✅ MAIL SENT SUCCESSFULLY! ID:", data.id);
     console.log("📧 Recipient:", process.env.ADMIN_EMAIL);
 
     res.json({
@@ -285,7 +274,6 @@ app.post("/book-taxi", async (req, res) => {
     console.error("❌ MAIL SENDING ERROR:", {
       message: error.message,
       stack: error.stack,
-      response: error.response
     });
     res.status(500).json({
       success: false,
